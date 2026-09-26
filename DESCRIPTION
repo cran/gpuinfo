@@ -1,0 +1,33 @@
+Package: gpuinfo
+Title: Lightweight Hardware and GPU Compute Detection
+Version: 0.1.0
+Authors@R: person("Stefano", "Cacciatore", role = c("aut", "cre"),
+    email = "tkcaccia@gmail.com",
+    comment = c(ORCID = "0000-0001-7052-7156"))
+Description: Detects central processing unit and graphics processing unit
+    hardware and reports the apparent availability of 'CUDA', 'Metal', 'ROCm',
+    and 'OpenCL' compute backends. Detection uses operating-system information,
+    documented platform interfaces, and optional command-line utilities,
+    without requiring a GPU framework, 'Python', or a vendor software
+    development kit. Backend interpretation follows the official 'CUDA'
+    <https://docs.nvidia.com/cuda/cuda-driver-api/>, 'Metal'
+    <https://developer.apple.com/documentation/metal>, 'ROCm'
+    <https://rocm.docs.amd.com/>, and 'OpenCL'
+    <https://registry.khronos.org/OpenCL/> documentation. Missing hardware,
+    drivers, libraries, and utilities are handled safely.
+License: MIT + file LICENSE
+URL: https://github.com/tkcaccia/gpuinfo
+BugReports: https://github.com/tkcaccia/gpuinfo/issues
+Encoding: UTF-8
+NeedsCompilation: yes
+Depends: R (>= 3.6.0)
+Suggests: jsonlite, knitr, rmarkdown, testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0
+Packaged: 2026-09-15 14:45:12 UTC; stefano
+Author: Stefano Cacciatore [aut, cre] (ORCID:
+    <https://orcid.org/0000-0001-7052-7156>)
+Maintainer: Stefano Cacciatore <tkcaccia@gmail.com>
+Repository: CRAN
+Date/Publication: 2026-09-26 16:40:08 UTC
