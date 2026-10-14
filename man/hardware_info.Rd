@@ -12,13 +12,13 @@ hardware_info(as = c("list", "json"))
 suggested \code{jsonlite} package. Missing values become JSON \code{null} values.}
 }
 \value{
-A nested list containing R, system, CPU, GPU, backend, environment,
+A nested list containing R, system, CPU, memory, GPU, backend, environment,
 and package-validation details when \code{as = "list"}; otherwise a JSON
 character scalar containing the same information.
 }
 \description{
-Creates a single structured snapshot of the CPU, visible GPUs, compute
-backends, execution environment, and validation evidence. This is the main
+Creates a single structured snapshot of the CPU, system memory, visible
+GPUs, compute backends, execution environment, and validation evidence. This is the main
 entry point when more detail than the \verb{has_*()} predicates is required.
 }
 \details{
@@ -27,6 +27,9 @@ and system software visible to the current R process; it does not determine
 whether torch, TensorFlow, or another package was compiled with GPU support.
 Containers, schedulers, permissions, and device-visibility environment
 variables can affect the result.
+Repeated commands and native probes are reused within this call to avoid
+scanning the same hardware several times. The observations are discarded
+when the call finishes; the next call collects fresh dynamic values.
 }
 \section{Returned components}{
 
@@ -34,17 +37,27 @@ The report contains the following named components:
 \describe{
 \item{r}{R version and platform.}
 \item{system}{Operating-system name, release, version, and architecture.}
-\item{cpu}{CPU model, vendor, architecture, logical-core count, and OS.}
+\item{cpu}{CPU identity, topology, process-available cores, features,
+detection source, status, and reason codes.}
+\item{memory}{Host, effective container, swap, and selected-process memory,
+in bytes. Dynamic values are sampled on each call.}
 \item{gpu}{One row per detected visible GPU, including device id, vendor,
 model, reported memory, backend, and NVIDIA compute capability when
-known. An empty data frame means that no visible GPU was detected.}
+known. This compact table is retained for compatibility.}
+\item{gpu_devices}{Detailed process-visible and physical device rows with
+UUIDs, visibility, byte-based memory, and CUDA architecture.}
+\item{gpu_summary}{Visible and physical device counts plus a multi-GPU
+visibility flag. It does not claim package-specific multi-GPU execution.}
 \item{accelerators}{A vendor-neutral accelerator table with memory and
 backend-status information.}
 \item{capabilities}{Per-device precision, memory, and backend capability
 information. Unknown capabilities are represented by \code{NA}.}
 \item{cuda}{NVIDIA GPU, driver, runtime, Toolkit, \code{nvcc}, versions, and
-apparent CUDA usability. The CUDA version advertised by \code{nvidia-smi} is
-a driver-supported maximum, not necessarily an installed Toolkit.}
+shared-library inventory, plus apparent CUDA usability. The CUDA version
+advertised by \code{nvidia-smi} is a driver-supported maximum, not necessarily
+an installed Toolkit.}
+\item{nccl}{Optional NCCL shared-library loading and version information,
+plus the process-visible CUDA device count. No communicator is created.}
 \item{metal}{macOS platform, Apple silicon, device, framework, support,
 and apparent Metal usability.}
 \item{rocm}{AMD GPU, kernel driver, runtime, utilities, version, and
@@ -68,10 +81,6 @@ names(info)
 info$cpu
 info$gpu
 info$cuda$usable
-
-if (requireNamespace("jsonlite", quietly = TRUE)) {
-    json <- hardware_info("json")
-}
 
 }
 \seealso{

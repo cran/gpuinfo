@@ -12,7 +12,7 @@
 
 <meta name="author" content="Stefano Cacciatore" />
 
-<meta name="date" content="2026-09-15" />
+<meta name="date" content="2026-10-14" />
 
 <title>Hardware Detection and Validation</title>
 
@@ -340,7 +340,7 @@ code > span.er { color: #a61717; background-color: #e3d2d2; }
 
 <h1 class="title toc-ignore">Hardware Detection and Validation</h1>
 <h4 class="author">Stefano Cacciatore</h4>
-<h4 class="date">2026-09-15</h4>
+<h4 class="date">2026-10-14</h4>
 
 
 
@@ -360,6 +360,15 @@ TensorFlow, or another package was compiled with that backend.</p>
 <span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a></span>
 <span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a><span class="fu">hardware_info</span>()</span>
 <span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="fu">gpu_sitrep</span>()</span></code></pre></div>
+<p>CPU and RAM are available independently of GPU backends:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">cpu_info</span>()</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="fu">system_memory_info</span>()</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="fu">hardware_info</span>()<span class="sc">$</span>gpu_summary</span></code></pre></div>
+<p><code>available_cores</code> and effective-memory fields account for
+detectable process, container, and scheduler limits. They remain
+separate from host totals. A multi-GPU flag means multiple devices are
+visible; it does not prove that another R package can distribute work
+across them.</p>
 <p>All probes are defensive. Missing hardware, commands, drivers, or
 libraries produce <code>FALSE</code>, empty results, or <code>NA</code>
 fields instead of an installation or runtime error. Detailed backend
@@ -368,56 +377,138 @@ information distinguishes <code>available</code>,
 predicates only return <code>TRUE</code> for a confirmed usable
 backend.</p>
 </div>
+<div id="benchmark-memory-and-manifests" class="section level2">
+<h2>Benchmark memory and manifests</h2>
+<p>Version 0.2.0 separates device-wide memory from process-level
+memory:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>device_memory <span class="ot">&lt;-</span> <span class="fu">gpu_memory_info</span>()</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>before <span class="ot">&lt;-</span> <span class="fu">gpu_memory_sample</span>()</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="co"># Run GPU work here. Synchronize with the framework before sampling if the</span></span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="co"># operation is asynchronous.</span></span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>after <span class="ot">&lt;-</span> <span class="fu">gpu_memory_sample</span>()</span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>manifest <span class="ot">&lt;-</span> <span class="fu">hardware_manifest</span>(<span class="at">memory =</span> <span class="st">&quot;process&quot;</span>)</span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a><span class="co"># For worker-based benchmarks, collect several snapshots and aggregate them.</span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a>devices <span class="ot">&lt;-</span> <span class="fu">subset</span>(<span class="fu">gpu_devices</span>(), process_visible)</span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a>peak <span class="ot">&lt;-</span> <span class="fu">gpu_memory_peak</span>(<span class="fu">list</span>(before, after), devices)</span></code></pre></div>
+<p><code>gpu_memory_info()</code> reports the device-wide total, used,
+and free values that the available system probe exposes.
+<code>gpu_memory_sample()</code> instead produces one timestamped row
+per process-visible device. Repeated calls can be combined into a
+benchmark time series; the function does not run a background thread and
+does not force asynchronous GPU work to finish.</p>
+<p>For CUDA, memory is the value in <code>nvidia-smi</code>’s
+compute-process table for the requested PID, reconciled to the
+CUDA-visible device by UUID. It is current, driver-attributed allocation
+rather than a peak. Windows WDDM drivers may not expose it, in which
+case the result is <code>NA</code> with a reason code. A successful
+query with no row for the process is zero bytes and
+<code>not_active</code>.</p>
+<p><code>gpu_memory_peak()</code> groups rows by UUID, sums worker
+processes within each sampling instant, and returns the largest complete
+observed sum per expected device. It never reconciles by logical or
+physical device number. Missing or incomplete devices remain
+<code>NA</code> with status <code>unmeasured</code>, rather than being
+interpreted as zero. The result is sampling-dependent and is not a
+lifetime high-water mark maintained by the driver.</p>
+<p>For Metal, memory is <code>MTLDevice.currentAllocatedSize</code> for
+the current R process. It measures current Metal resource allocations,
+not resident memory, peak memory, total unified memory, or allocations
+by other processes. The Metal API used here cannot inspect an arbitrary
+PID. Unsupported measurements remain <code>NA</code>;
+<code>gpuinfo</code> never estimates them from total memory.</p>
+<p><code>hardware_manifest()</code> packages CPU topology,
+host/effective RAM, process-visible devices, CUDA driver, runtime,
+Toolkit and compiler state, optional NCCL library/version information,
+other generic backends, measurement rules, and an optional memory sample
+into a schema-versioned list or JSON record.</p>
+<p>The consolidated <code>cuda_libraries()</code> table reports whether
+the current process can dynamically load the CUDA driver, runtime,
+cuBLAS, cuFFT, cuSOLVER, cuRAND, and NCCL. Loading is a discovery check,
+not an execution test: no BLAS handle, FFT plan, solver, random
+generator, or NCCL communicator is created. Higher level dependencies
+such as cuVS and RAFT remain consumer-package checks.</p>
+<p><code>nccl_info()</code> is deliberately a lightweight discovery
+probe. It loads the shared library and calls
+<code>ncclGetVersion()</code> when available, but never creates a
+communicator. Its CUDA device count describes process visibility only;
+it is not evidence that collective communication works.</p>
+</div>
 <div id="evidence-shipped-with-this-release" class="section level2">
 <h2>Evidence shipped with this release</h2>
 <p>Real-device results are stored with the package and returned inside
 <code>hardware_info()</code>. The table is intentionally narrower than
 the implemented probe set.</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">library</span>(gpuinfo)</span>
-<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="fu">hardware_info</span>()<span class="sc">$</span>validation</span>
-<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="co">#&gt;   package_version       date                                      os</span></span>
-<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="co">#&gt; 1           0.1.0 2026-09-05                              macOS 14.5</span></span>
-<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="co">#&gt; 2           0.1.0 2026-09-05                              macOS 14.5</span></span>
-<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a><span class="co">#&gt; 3           0.1.0 2026-09-05 Linux 6.12.100 / Ubuntu 22.04 container</span></span>
-<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a><span class="co">#&gt; 4           0.1.0 2026-09-05 Linux 6.12.100 / Ubuntu 22.04 container</span></span>
-<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="co">#&gt; 5           0.1.0 2026-09-05                            Ubuntu 24.04</span></span>
-<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="co">#&gt;   architecture                   hardware backend result</span></span>
-<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="co">#&gt; 1        arm64                   Apple M3   metal   pass</span></span>
-<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="co">#&gt; 2        arm64                   Apple M3     cpu   pass</span></span>
-<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="co">#&gt; 3       x86_64            NVIDIA Tesla T4    cuda   pass</span></span>
-<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="co">#&gt; 4       x86_64            NVIDIA Tesla T4  opencl   pass</span></span>
-<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="co">#&gt; 5        arm64 GitHub-hosted ARM64 runner     cpu   pass</span></span>
-<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a><span class="co">#&gt;                                                                          scope</span></span>
-<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a><span class="co">#&gt; 1                                                  native probe and public API</span></span>
-<span id="cb2-17"><a href="#cb2-17" tabindex="-1"></a><span class="co">#&gt; 2                                            cpu model core count and fallback</span></span>
-<span id="cb2-18"><a href="#cb2-18" tabindex="-1"></a><span class="co">#&gt; 3 native driver device memory capability runtime toolkit and backend selection</span></span>
-<span id="cb2-19"><a href="#cb2-19" tabindex="-1"></a><span class="co">#&gt; 4      native OpenCL enumeration and CUDA OpenCL physical device deduplication</span></span>
-<span id="cb2-20"><a href="#cb2-20" tabindex="-1"></a><span class="co">#&gt; 5                          source install native compilation and package tests</span></span></code></pre></div>
-<p>For version 0.1.0, real GPU validation covers:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">library</span>(gpuinfo)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">hardware_info</span>()<span class="sc">$</span>validation</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="co">#&gt;    package_version       date                                      os</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="co">#&gt; 1            0.1.0 2026-09-05                              macOS 14.5</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="co">#&gt; 2            0.1.0 2026-09-05                              macOS 14.5</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="co">#&gt; 3            0.1.0 2026-09-05 Linux 6.12.100 / Ubuntu 22.04 container</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="co">#&gt; 4            0.1.0 2026-09-05 Linux 6.12.100 / Ubuntu 22.04 container</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="co">#&gt; 5            0.1.0 2026-09-05                            Ubuntu 24.04</span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="co">#&gt; 6            0.2.0 2026-10-10                              macOS 14.5</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="co">#&gt; 7            0.2.0 2026-10-10                              macOS 14.5</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="co">#&gt; 8            0.2.0 2026-10-10                              macOS 14.5</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="co">#&gt; 9            0.2.0 2026-10-10                          Ubuntu 22.04.5</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="co">#&gt; 10           0.2.0 2026-10-10                          Ubuntu 22.04.5</span></span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="co">#&gt;    architecture                      hardware backend result</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="co">#&gt; 1         arm64                      Apple M3   metal   pass</span></span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="co">#&gt; 2         arm64                      Apple M3     cpu   pass</span></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="co">#&gt; 3        x86_64               NVIDIA Tesla T4    cuda   pass</span></span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="co">#&gt; 4        x86_64               NVIDIA Tesla T4  opencl   pass</span></span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="co">#&gt; 5         arm64    GitHub-hosted ARM64 runner     cpu   pass</span></span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="co">#&gt; 6         arm64                      Apple M3     cpu   pass</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="co">#&gt; 7         arm64                      Apple M3   metal   pass</span></span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a><span class="co">#&gt; 8         arm64                      Apple M3  opencl   pass</span></span>
+<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a><span class="co">#&gt; 9        x86_64    NVIDIA GeForce RTX 5060 Ti    cuda   pass</span></span>
+<span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a><span class="co">#&gt; 10       x86_64 Intel Corporation Device a780  opencl   pass</span></span>
+<span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a><span class="co">#&gt;                                                                                 scope</span></span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a><span class="co">#&gt; 1                                                         native probe and public API</span></span>
+<span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a><span class="co">#&gt; 2                                                   cpu model core count and fallback</span></span>
+<span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a><span class="co">#&gt; 3        native driver device memory capability runtime toolkit and backend selection</span></span>
+<span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a><span class="co">#&gt; 4             native OpenCL enumeration and CUDA OpenCL physical device deduplication</span></span>
+<span id="cb4-30"><a href="#cb4-30" tabindex="-1"></a><span class="co">#&gt; 5                                 source install native compilation and package tests</span></span>
+<span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a><span class="co">#&gt; 6                                 CPU topology host RAM effective RAM and process RSS</span></span>
+<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a><span class="co">#&gt; 7                                native device process memory manifest and public API</span></span>
+<span id="cb4-33"><a href="#cb4-33" tabindex="-1"></a><span class="co">#&gt; 8                              native OpenCL platform and compute-device availability</span></span>
+<span id="cb4-34"><a href="#cb4-34" tabindex="-1"></a><span class="co">#&gt; 9  driver runtime CUDA 13 Toolkit nvcc compute capability 12.0 sm_120 and compute_120</span></span>
+<span id="cb4-35"><a href="#cb4-35" tabindex="-1"></a><span class="co">#&gt; 10                 OpenCL enumeration and vendor classification alongside NVIDIA CUDA</span></span></code></pre></div>
+<p>The real-device evidence for the version 0.2.0 candidate covers:</p>
 <ul>
-<li>Apple M3 with Metal on macOS;</li>
-<li>NVIDIA Tesla T4 with CUDA on Linux; and</li>
+<li>Apple M3 with Metal and OpenCL on macOS;</li>
+<li>NVIDIA Tesla T4 with CUDA on Linux;</li>
 <li>NVIDIA Tesla T4 OpenCL enumeration and CUDA/OpenCL physical-device
-deduplication on Linux.</li>
+deduplication on Linux;</li>
+<li>NVIDIA RTX 5060 Ti with CUDA 13.0, compute capability 12.0,
+<code>sm_120</code> native code and <code>compute_120</code> PTX build
+settings on Ubuntu 22.04.5; and</li>
+<li>Intel OpenCL enumeration alongside the NVIDIA device on the same
+Linux host.</li>
 </ul>
 <p>Linux ARM64 validates the CPU path and native package compilation.
 Hosted Linux, Windows, Intel macOS, and Apple Silicon macOS jobs
 exercise package installation, tests, and no-GPU behavior. A hosted
 Windows CPU runner is not evidence of Windows NVIDIA support.</p>
-<p>AMD ROCm, Intel GPU OpenCL, and Windows NVIDIA CUDA/OpenCL remain
-unvalidated for version 0.1.0. Their probes are available for early
-testing but are not represented as validated hardware support.</p>
+<p>AMD ROCm and Windows NVIDIA CUDA/OpenCL remain unvalidated for this
+candidate. Intel OpenCL evidence is limited to the one Linux device
+listed above. Other probes are available for early testing but are not
+represented as validated hardware support.</p>
 </div>
 <div id="reproducing-a-real-hardware-run" class="section level2">
 <h2>Reproducing a real-hardware run</h2>
 <p>Use a clean public commit so the tested source is recoverable.
 Replace <code>BACKEND</code> with <code>cuda</code>, <code>metal</code>,
 <code>rocm</code>, or <code>opencl</code>.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/tkcaccia/gpuinfo.git</span>
-<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="bu">cd</span> gpuinfo</span>
-<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a><span class="fu">git</span> rev-parse HEAD</span>
-<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL .</span>
-<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="ex">Rscript</span> tools/validate-hardware.R BACKEND <span class="kw">|</span> <span class="fu">tee</span> validation-output.txt</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/tkcaccia/gpuinfo.git</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="bu">cd</span> gpuinfo</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="fu">git</span> rev-parse HEAD</span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="ex">R</span> CMD build .</span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="ex">shasum</span> <span class="at">-a</span> 256 gpuinfo_<span class="pp">*</span>.tar.gz</span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL gpuinfo_<span class="pp">*</span>.tar.gz</span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="ex">Rscript</span> tools/validate-hardware.R BACKEND <span class="kw">|</span> <span class="fu">tee</span> validation-output.txt</span></code></pre></div>
 <p>A successful run ends with <code>VALIDATION PASSED</code>. Preserve
 the full output and record the package commit, operating system,
 architecture, GPU model, driver, runtime, memory, provider, and job
